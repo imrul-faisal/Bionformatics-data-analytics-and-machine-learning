@@ -1,0 +1,155 @@
+---
+title: "R Notebook for analyzing 10000 immune cells extracted from lung"
+output: html_notebook
+---
+### This notebook is not meant to be implemented by others. All the data shown here are from one of my current projects, and are unpublished. This is only to show potential employers as a portfolio.
+
+```{r}
+setwd("~path/to/the/10x/mtx/files/folder")
+```
+
+
+```{r}
+#install.packages('Seurat')
+library(Seurat)
+library(dplyr)
+library(patchwork)
+```
+
+
+```{r}
+#WT-vs-KI matrix
+directory="~path/to/the/10x/mtx/files/folder"
+raw_data<-Read10X(directory)
+lung<- CreateSeuratObject(counts = raw_data, project = "KI-vs-WT", min.cells = 3, min.features = 200)
+```
+```{r}
+wt_dir="~path/to/the/10x/mtx/files/folder/filtered_feature_bc_matrix_WT"
+ki_dir="~path/to/the/10x/mtx/files/folder/filtered_feature_bc_matrix_KI"
+raw_wt<-Read10X(wt_dir)
+raw_ki<-Read10X(ki_dir)
+lung_wt<-CreateSeuratObject(counts = raw_wt, project = "WT", min.cells = 3, min.features = 200)
+lung_ki<-CreateSeuratObject(counts = raw_ki, project = "KI", min.cells = 3, min.features = 200)
+lung_ki@meta.data$stim<-'KI'
+lung_wt@meta.data$stim<-'WT'
+lung_ki[["percent.mt"]] <- PercentageFeatureSet(lung_ki, pattern = "^MT-|^mt-")
+lung_wt[["percent.mt"]] <- PercentageFeatureSet(lung_wt, pattern = "^MT-|^mt-")
+VlnPlot(lung_ki, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+VlnPlot(lung_wt, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+lung_wt <- subset(lung_wt, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 5)
+lung_ki <- subset(lung_ki, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 5)
+```
+
+
+```{r}
+#normalize
+lung_ki <- NormalizeData(lung_ki, normalization.method = "LogNormalize", scale.factor = 10000)
+lung_wt <- NormalizeData(lung_wt, normalization.method = "LogNormalize", scale.factor = 10000)
+feature_wt <- FindVariableFeatures(lung_wt, selection.method = "vst", nfeatures = 2000)
+feature_ki <- FindVariableFeatures(lung_ki, selection.method = "vst", nfeatures = 2000)
+top10_wt <- head(VariableFeatures(feature_wt), 10)
+top10_ki <- head(VariableFeatures(feature_ki), 10)
+
+plotwt1 <- VariableFeaturePlot(feature_wt)
+plotwt2 <- LabelPoints(plot = plotwt1, points = top10_wt, repel = TRUE)
+plotwt1 + plotwt2
+
+plotki1 <- VariableFeaturePlot(feature_ki)
+plotki2 <- LabelPoints(plot = plotki1, points = top10_ki, repel = TRUE)
+plotki1 + plotki2
+
+plot_wt<-LabelPoints(plot = VariableFeaturePlot(feature_wt), points = top10_wt, repel = TRUE)
+plot_ki<-LabelPoints(plot = VariableFeaturePlot(feature_ki), points = top10_ki, repel = TRUE)
+plot_wt + plot_ki
+```
+
+
+```{r}
+#Scaling the data
+all_genes_wt <- rownames(lung_wt)
+all_genes_ki <- rownames(lung_ki)
+scaled_ki <- ScaleData(lung_ki, features = all_genes_ki)
+scaled_wt <- ScaleData(lung_wt, features = all_genes_wt)
+```
+
+```{r}
+# Combining 2 datasets
+features <- SelectIntegrationFeatures(object.list = c(lung_ki, lung_wt))
+immune.anchors <- FindIntegrationAnchors(object.list = c(lung_ki, lung_wt), anchor.features = features)
+immune.combined <- IntegrateData(anchorset = immune.anchors)
+
+# specify that we will perform downstream analysis on the corrected data note that the
+# original unmodified data still resides in the 'RNA' assay
+DefaultAssay(immune.combined) <- "integrated"
+
+# Run the standard workflow for visualization and clustering
+immune.combined <- ScaleData(immune.combined, verbose = FALSE)
+immune.combined <- RunPCA(immune.combined, npcs = 30, verbose = FALSE)
+immune.combined <- RunUMAP(immune.combined, reduction = "pca", dims = 1:30)
+immune.combined <- FindNeighbors(immune.combined, reduction = "pca", dims = 1:30)
+immune.combined <- FindClusters(immune.combined, resolution = 0.5)
+
+p1 <- DimPlot(immune.combined, reduction = "umap", group.by = "stim")
+p2 <- DimPlot(immune.combined, reduction = "umap", label = TRUE, repel = TRUE)
+p1 + p2
+
+p1 <- DimPlot(immune.combined, reduction = "umap", group.by = "stim")
+p2 <- DimPlot(immune.combined, reduction = "umap", label = TRUE, repel = TRUE)
+p1 + p2
+
+DimPlot(immune.combined, reduction = "umap", split.by = "stim")
+
+cell_counts <- table(Idents(immune.combined), immune.combined$stim)
+print(cell_counts)
+
+```
+
+```{r}
+tPlot<-DimPlot(immune.combined_renamed, reduction = "umap", group.by = "stim")
+tPlot[[1]]$layers[[1]]$aes_params$alpha = ifelse (immune.combined_renamed@meta.data$stim == "KI", 0.5, 0.1)
+tPlot
+
+
+
+p1 <- DimPlot(immune.combined_renamed, reduction = "umap", group.by = "stim")
+p1[[1]]$layers[[1]]$aes_params$alpha = ifelse (immune.combined_renamed@meta.data$stim == "KI", 0.3, 0.05)
+p2 <- DimPlot(immune.combined, reduction = "umap", label = TRUE, repel = TRUE)
+p<-p1 + p2
+p
+```
+
+
+```{r}
+test.markers <- FindConservedMarkers(immune.combined, ident.1 = 6, grouping.var = "stim", verbose = FALSE)
+head(test.markers)
+```
+
+
+```{r}
+immune.combined_renamed <- RenameIdents(immune.combined, `0` = "Neutrophil", `1` = "T", `2` = "Macrophage",`3` = "NK", `4` = "B", `5` = "T", `6` = "T", `7` = "pDC", `8` = "T active", `9` = "B", `10` = "T active", `11` = "cDC", `12` = "cDC", `13` = "T active", `14` = "T active", '15'="B", '18'="Monocyte")
+immune.combined_renamed$celltype <- Idents(immune.combined_renamed)
+print(table(Idents(immune.combined_renamed), immune.combined_renamed$stim))
+```
+
+```{r}
+renamed_counts<-table(Idents(immune.combined_renamed), immune.combined_renamed$stim)
+print(renamed_counts)
+```
+
+
+```{r}
+DotPlot(immune.combined, features = c("Itgax", "Cd80", "Cd86", "Bst2")) + RotatedAxis()
+DotPlot(immune.combined, features = c("Itgax", "Cd80", "Cd86", "Bst2"), split.by = "stim") + RotatedAxis()
+```
+
+```{r}
+plots <- VlnPlot(immune.combined, features = c("Ly6g", "Ly6c1", "Gsr"), split.by = "stim", group.by = "stim", pt.size = 0, combine = FALSE)
+RidgePlot(immune.combined, features = c("Ly6g", "Gsr", "Ly6c1", "Csf1r"), ncol = 2)
+```
+
+
+```{r}
+FeaturePlot(immune.combined_renamed, features = c("Itgax", "H2-M3"), min.cutoff = 1, split.by = "stim", blend = T, blend.threshold = 0.2)
+
+```
+
