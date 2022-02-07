@@ -2,7 +2,7 @@
 
 This repository contains some of the example codes and analysis pipelines I have composed in different projects. 
 
-The Seurat (R) and Scanpy (Python) notebook files contain codes for single cell NGS analysis.
+The Seurat (R), singleR (R) and Scanpy (Python) notebook files contain codes for single cell NGS analysis.
 
 The machine learning files (jupyter notebooks) contain Master of Engineering study assignments and projects at Arcada University of Applied Sciences what I have been recently pursuing.
 
