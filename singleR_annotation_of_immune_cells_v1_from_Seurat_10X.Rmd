@@ -1,0 +1,190 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+#if (!require("BiocManager", quietly = TRUE))
+#    install.packages("BiocManager")
+
+# The following initializes usage of Bioc devel
+#BiocManager::install(version='3.14')
+```
+
+
+```{r}
+BiocManager::install('SingleR')
+BiocManager::install('celldex')
+BiocManager::install('scRNAseq')
+```
+
+```{r}
+library('SingleR')
+library('celldex')
+library('scRNAseq')
+```
+
+```{r}
+setwd("~/Documents/Imrul/University of Helsinki_SusannaF/Data/single_cell_sequencing/KI_lung_2021-09/Seurat_analysis")
+library(Seurat)
+library(dplyr)
+library(patchwork)
+wt_dir="~/Documents/Imrul/University of Helsinki_SusannaF/Data/single_cell_sequencing/KI_lung_2021-09/filtered_feature_bc_matrix_WT"
+ki_dir="~/Documents/Imrul/University of Helsinki_SusannaF/Data/single_cell_sequencing/KI_lung_2021-09/filtered_feature_bc_matrix_KI"
+raw_wt<-Read10X(wt_dir)
+raw_ki<-Read10X(ki_dir)
+lung_wt<-CreateSeuratObject(counts = raw_wt, project = "WT", min.cells = 3, min.features = 200)
+lung_ki<-CreateSeuratObject(counts = raw_ki, project = "KI", min.cells = 3, min.features = 200)
+lung_ki@meta.data$stim<-'KI'
+lung_wt@meta.data$stim<-'WT'
+lung_ki[["percent.mt"]] <- PercentageFeatureSet(lung_ki, pattern = "^MT-|^mt-")
+lung_wt[["percent.mt"]] <- PercentageFeatureSet(lung_wt, pattern = "^MT-|^mt-")
+VlnPlot(lung_ki, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+VlnPlot(lung_wt, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+lung_wt <- subset(lung_wt, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 5)
+lung_ki <- subset(lung_ki, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 5)
+
+#normalize
+lung_ki <- NormalizeData(lung_ki, normalization.method = "LogNormalize", scale.factor = 10000)
+lung_wt <- NormalizeData(lung_wt, normalization.method = "LogNormalize", scale.factor = 10000)
+```
+
+
+
+
+```{r}
+library('scRNAseq')
+#out <- listDatasets()
+sce_mouse <- ZilionisLungData("mouse")
+table(sce_mouse$`Most likely Immgen cell type`)
+#table(sce_mouse$`Major cell type`)
+#table(sce_mouse$`Minor subset`)
+sce_mouse_minor<-sce_mouse[,!is.na(sce_mouse$`Minor subset`)]
+sce_mouse_major<-sce_mouse[,!is.na(sce_mouse$`Major cell type`)]
+sce_mouse_mlict<-sce_mouse[,!is.na(sce_mouse$`Most likely Immgen cell type`)]
+
+library(scater)
+head(sce_mouse$`Total counts`)
+sce_mouse<-logNormCounts(sce_mouse)
+sce_mouse_minor<-logNormCounts(sce_mouse_minor)
+sce_mouse_major<-logNormCounts(sce_mouse_major)
+head(sce_mouse$`Total counts`)
+head(sce_mouse$sizeFactor)
+
+```
+
+```{r}
+#BiocManager::install("SingleCellExperiment")
+# convert seurat object 'lung_ki' to sce object
+lung_ki_sce<-as.SingleCellExperiment(lung_ki)
+lung_ki_sce<-logNormCounts(lung_ki_sce)
+lung_wt_sce<-as.SingleCellExperiment(lung_wt)
+lung_wt_sce<-logNormCounts(lung_wt_sce)
+```
+
+```{r}
+pred_ki_minor_v1 <- SingleR(test=lung_ki_sce, ref=sce_mouse_minor, labels=sce_mouse_minor$`Minor subset`, de.method="wilcox")
+table(pred_ki_minor_v1$labels)
+
+pred_wt_minor_v1 <- SingleR(test=lung_wt_sce, ref=sce_mouse_minor, labels=sce_mouse_minor$`Minor subset`, de.method="wilcox")
+table(pred_wt_minor_v1$labels)
+
+pred_ki_major_v1 <- SingleR(test=lung_ki_sce, ref=sce_mouse_major, labels=sce_mouse_major$`Major cell type`, de.method="wilcox")
+table(pred_ki_major_v1$labels)
+
+pred_wt_major_v1 <- SingleR(test=lung_wt_sce, ref=sce_mouse_major, labels=sce_mouse_major$`Major cell type`, de.method="wilcox")
+table(pred_wt_major_v1$labels)
+```
+
+```{r}
+lung_ki@meta.data$label_major<-pred_ki_major_v1$labels
+lung_wt@meta.data$label_major<-pred_wt_major_v1$labels
+lung_ki@meta.data$label_minor<-pred_ki_minor_v1$labels
+lung_wt@meta.data$label_minor<-pred_wt_minor_v1$labels
+```
+
+
+```{r}
+feature_wt <- FindVariableFeatures(lung_wt, selection.method = "vst", nfeatures = 2000)
+feature_ki <- FindVariableFeatures(lung_ki, selection.method = "vst", nfeatures = 2000)
+top10_wt <- head(VariableFeatures(feature_wt), 10)
+top10_ki <- head(VariableFeatures(feature_ki), 10)
+
+#plotwt1 <- VariableFeaturePlot(feature_wt)
+#plotwt2 <- LabelPoints(plot = plotwt1, points = top10_wt, repel = TRUE)
+#plotwt1 + plotwt2
+
+plotki1 <- VariableFeaturePlot(feature_ki)
+plotki2 <- LabelPoints(plot = plotki1, points = top10_ki, repel = TRUE)
+plotki1 + plotki2
+
+plot_wt<-LabelPoints(plot = VariableFeaturePlot(feature_wt), points = top10_wt, repel = TRUE)
+plot_ki<-LabelPoints(plot = VariableFeaturePlot(feature_ki), points = top10_ki, repel = TRUE)
+plot_wt + plot_ki
+```
+
+```{r}
+#Scaling the data
+all_genes_wt <- rownames(lung_wt)
+all_genes_ki <- rownames(lung_ki)
+scaled_ki <- ScaleData(lung_ki, features = all_genes_ki)
+scaled_wt <- ScaleData(lung_wt, features = all_genes_wt)
+```
+
+```{r}
+# Combining 2 datasets
+features <- SelectIntegrationFeatures(object.list = c(lung_ki, lung_wt))
+immune.anchors <- FindIntegrationAnchors(object.list = c(lung_ki, lung_wt), anchor.features = features)
+immune.combined <- IntegrateData(anchorset = immune.anchors)
+
+# specify that we will perform downstream analysis on the corrected data note that the
+# original unmodified data still resides in the 'RNA' assay
+DefaultAssay(immune.combined) <- "integrated"
+
+# Run the standard workflow for visualization and clustering
+immune.combined <- ScaleData(immune.combined, verbose = FALSE)
+immune.combined <- RunPCA(immune.combined, npcs = 30, verbose = FALSE)
+immune.combined <- RunUMAP(immune.combined, reduction = "pca", dims = 1:30)
+immune.combined <- FindNeighbors(immune.combined, reduction = "pca", dims = 1:30)
+immune.combined <- FindClusters(immune.combined, resolution = 0.5)
+
+p1 <- DimPlot(immune.combined, reduction = "umap", group.by = "stim")
+p2 <- DimPlot(immune.combined, reduction = "umap", label = TRUE, repel = TRUE)
+p1 + p2
+
+p1 <- DimPlot(immune.combined, reduction = "umap", group.by = "stim")
+p2 <- DimPlot(immune.combined, reduction = "umap", label = TRUE, repel = TRUE)
+p1 + p2
+
+DimPlot(immune.combined, reduction = "umap", split.by = "stim")
+
+cell_counts <- table(Idents(immune.combined), immune.combined$stim)
+print(cell_counts)
+```
+
+```{r}
+cell_counts_by_major <- table((immune.combined@meta.data$label_major), immune.combined$stim)
+cell_counts_by_minor <- table((immune.combined@meta.data$label_minor), immune.combined$stim)
+cell_counts_by_cluster_vs_major <- table(Idents(immune.combined), immune.combined$label_major)
+cell_counts_by_cluster_vs_minor <- table(Idents(immune.combined), immune.combined$label_minor)
+```
+
+```{r}
+options(warn=-1) # To turn warnings back on, use: options(warn=0)
+# UMAP by major immune cell categories
+dimplot_major<-DimPlot(immune.combined, reduction = "umap", split.by = "stim", group.by = "label_major", label = TRUE, repel = TRUE)
+dimplot_major
+# UMAP by minor immune cell categories
+dimplot_minor<-DimPlot(immune.combined, reduction = "umap", split.by = "stim", group.by = "label_minor", label = TRUE, repel = TRUE)
+dimplot_minor
+```
+
+
+
+
+
+
+
+
+
